@@ -14,7 +14,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"log"
 	"os"
 )
@@ -22,6 +21,32 @@ import (
 type rsaKeyPair struct {
 	pub *rsa.PublicKey
 	pri *rsa.PrivateKey
+}
+
+func main() {
+	pubEnv := os.Getenv("PUB_KEY")
+	priEnv := os.Getenv("PRI_KEY")
+
+	var pubKeyString string
+	var priKeyString string
+	if len(pubEnv) > 0 {
+		pubKeyString = pubEnv
+		priKeyString = priEnv
+	} else {
+		pubKeyString = defaultRsaPubkey
+		priKeyString = defaultRsaPriKey
+	}
+	rsaKeyPair := rsaParseKeys(pubKeyString, priKeyString)
+
+	// Sending
+	msg := []byte("some long-ass message")
+	payload := encryptAES(msg, defaultAesKey)
+	payloadKey := encryptRSA(defaultAesKey, rsaKeyPair.pub)
+	// Receiving
+	aesKey := decryptRSA(payloadKey, rsaKeyPair.pri)
+	plaintext := decryptAES(payload, aesKey)
+	// Verify
+	fmt.Printf("msg: %s\ndecrypted: %s\n", msg, plaintext)
 }
 
 func rsaParseKeys(pub, pri string) *rsaKeyPair {
@@ -47,50 +72,17 @@ func rsaParseKeys(pub, pri string) *rsaKeyPair {
 	}
 }
 
-func main() {
-	pubEnv := os.Getenv("PUB_KEY")
-	priEnv := os.Getenv("PRI_KEY")
-
-	var pubKeyString string
-	var priKeyString string
-	if len(pubEnv) > 0 {
-		pubKeyString = pubEnv
-		priKeyString = priEnv
-	} else {
-		pubKeyString = defaultRsaPubkey
-		priKeyString = defaultRsaPriKey
-	}
-
-	rsaKeyPair := rsaParseKeys(pubKeyString, priKeyString)
-
-	rsaCiphertext := encryptRsa("01234567890123456789012345678901", rsaKeyPair.pub)
-	rsaPlaintext := decryptRsa(rsaCiphertext, rsaKeyPair.pri)
-	keyFromRsa := rsaPlaintext
-
-	var aesKey string
-	if len(keyFromRsa) != 32 {
-		aesKey = defaultAesKey
-		fmt.Println("aeskey changed to default")
-	} else {
-		aesKey = keyFromRsa
-	}
-	aesCiphertext := encryptAES([]byte("success combine encryption!"), aesKey)
-	aesPlaintext := decryptAES(aesCiphertext, aesKey)
-	fmt.Println(string(aesPlaintext))
-
-}
-
-func encryptRsa(plaintext string, key *rsa.PublicKey) string {
+func encryptRSA(plaintext string, key *rsa.PublicKey) string {
 	hash := sha256.New()
 	salt := rand.Reader
 	ciphertext, err := rsa.EncryptOAEP(hash, salt, key, []byte(plaintext), nil)
 	if err != nil {
-		log.Fatal("failed to encryptRsa")
+		log.Fatal("failed to encryptRSA")
 	}
 	return string(ciphertext)
 }
 
-func decryptRsa(ciphertext string, key *rsa.PrivateKey) string {
+func decryptRSA(ciphertext string, key *rsa.PrivateKey) string {
 	hash := sha256.New()
 	salt := rand.Reader
 	plaintext, err := rsa.DecryptOAEP(hash, salt, key, []byte(ciphertext), nil)
@@ -110,9 +102,6 @@ func encryptAES(data []byte, key string) []byte {
 		log.Fatal("failed to wrap gcm")
 	}
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		log.Fatal("can't read nonce")
-	}
 	ciphertext := gcm.Seal(nonce, nonce, data, nil)
 	return ciphertext
 }
